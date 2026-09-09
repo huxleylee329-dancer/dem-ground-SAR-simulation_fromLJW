@@ -1,0 +1,6 @@
+%---------------产生高频幅度图---------------
+in_folder = '.\Kernel\Input\low\';
+load([in_folder 'mast.mat']);
+load([in_folder 'slave.mat']);
+mast = minmax
+

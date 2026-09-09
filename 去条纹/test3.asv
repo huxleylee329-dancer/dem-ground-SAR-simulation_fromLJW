@@ -1,0 +1,74 @@
+%%%阈值根据频谱峰值选择
+% clear all;
+% close all;
+%火山数据
+load('wrapped_phase.mat')
+ wrapped_phase_mean=angle(mean_filter(exp(j*wrapped_phase), 3));
+image0=wrapped_phase(81:140,121:180);
+image1=wrapped_phase_mean(81:140,121:180);
+
+
+m= 60;
+n=60;
+image_n = exp(j*image0); 
+image = exp(j*image1); 
+
+%%方法1 b1=max/sqrt(2)
+i2 = fftshift(fft2(image)); %窗口内2DFFT 
+i3=abs(i2);
+b=sqrt(2);
+Max=max(max(abs(i3)));     %频谱峰值
+                for ii=1:m
+                    for jj=1:n
+                       if i3(ii,jj)<(Max/b)
+                          i2(ii,jj)=0;
+                       end
+                    end
+                end
+ i4=ifft2(ifftshift(i2));%非线性相位
+res_phase = angle(image_n.*conj(i4));%残余相位
+ nonliner=angle(conj(i4));
+figure;imagesc(nonliner);colormap(jet);title('nonliner1');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+%  figure;mesh(i3)
+ figure;mesh(abs(i2))
+% figure;imagesc(image1);colormap(jet);title('mean');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+% figure;imagesc(image0);colormap(jet);title('wrapped');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+ figure;imagesc(res_phase);colormap(jet);title('res_phase1');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+ 
+ %%方法2 b1=max/m
+i2 = fftshift(fft2(image)); %窗口内2DFFT 
+i3=abs(i2);
+b=60;
+Max=max(max(abs(i3)));     %频谱峰值
+                for ii=1:m
+                    for jj=1:n
+                       if i3(ii,jj)<(Max/b)
+                          i2(ii,jj)=0;
+                       end
+                    end
+                end
+ i4=ifft2(ifftshift(i2));%非线性相位
+res_phase = angle(image_n.*conj(i4));%残余相位
+ nonliner=angle(conj(i4));
+figure;imagesc(nonliner);colormap(jet);title('nonliner2');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+ figure;mesh(abs(i2))
+ figure;imagesc(res_phase);colormap(jet);title('res_phase2');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+ 
+  %%方法3 b1=max/m
+i2 = fftshift(fft2(image)); %窗口内2DFFT 
+i3=abs(i2);
+[i3,~] = zero_signals(i3,0.05);%排序，设置保留元素比例
+
+                for ii=1:m
+                    for jj=1:n
+                       if i3(ii,jj)==0;
+                          i2(ii,jj)=0;
+                       end
+                    end
+                end
+ i4=ifft2(ifftshift(i2));%非线性相位
+res_phase = angle(image_n.*conj(i4));%残余相位
+ nonliner=angle(conj(i4));
+figure;imagesc(nonliner);colormap(jet);title('nonliner3');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
+ figure;mesh(abs(i2))
+ figure;imagesc(res_phase);colormap(jet);title('res_phase3');set(gca,'xtick',[],'xticklabel',[]);set(gca,'ytick',[],'yticklabel',[])
