@@ -1,66 +1,77 @@
-function [image2_quantify,image_slave_regis2] = regis_subpixel(image_master,image_slave_regis,nr,nc)
-% 精配准(亚像素级)
-% blocksize = 128; %子块大小128*128
-blocksize = 32; %子块大小ls0104
-nrnew = floor(nr/blocksize) * blocksize;
-ncnew = floor(nc/blocksize) * blocksize;
-% nrnew = 2^nextpow2(nr);
-% ncnew = 2^nextpow2(nc);
-% temp1 = zeros(nrnew,ncnew);%主
-% temp2 = zeros(nrnew,ncnew);%辅
-temp1 = image_master(1:nrnew,1:ncnew);%主
-temp2 = image_slave_regis(1:nrnew,1:ncnew);%辅
-% 分块
-image_master_cell = mat2cell(temp1,ones(nrnew/blocksize,1)*blocksize,...
-                           ones(ncnew/blocksize,1)*blocksize);
-image_slave_cell = mat2cell(temp2,ones(nrnew/blocksize,1)*blocksize,...
-                           ones(ncnew/blocksize,1)*blocksize);
-% 子块总数
-[nsubr,nsubc] = size(image_master_cell);
-nsub   = nsubr * nsubc;
-
-sub_r = zeros(nsub,1);    sub_c = zeros(nsub,1);
-m = zeros(nsub,1);      n = zeros(nsub,1);     indx = zeros(nsub,1);
-
-% 按列顺序依次提取各子块
-for nn = 1:nsub
-    image1 = cell2mat(image_master_cell(nn));
-    image2 = cell2mat(image_slave_cell(nn));
-    % 复图像插值,补零插值
-    interptimes = 16;
-    [image_interp1] = interp_paddingzero(image1,interptimes);
-    [image_interp2] = interp_paddingzero(image2,interptimes);
-    % 实相关函数求取偏移量
-    [move_r,move_c,~] = real_coherent(image_interp1,image_interp2,0);
-    % 亚像素偏移量
-    sub_r(nn) = move_r/interptimes;
-    sub_c(nn) = move_c/interptimes;
-    
-    jj = floor(nn/nsubr);    ii = rem(nn,nsubr);%求每个块的中心坐标
-    n(nn) = jj*blocksize + blocksize/2;%n为每块的中心像素的列坐标
-    if ii==0
-        m(nn) = nsubr*blocksize - blocksize/2;%m为每块中心像素的行坐标
-    else
-        m(nn) = (ii-1)*blocksize + blocksize/2;
-    end
-%  fprintf('(%f,%f)\n',sub_r(nn),sub_c(nn));
-    
-    image2_interp = interp_cubic(image2,sub_r(nn),sub_c(nn));%根据求出的偏移量，对辅图像的每个小块进行插值
-    
-    [~,coherence] = Calculation_Coherence_Coefficient(image1,image2_interp);%将插值配准之后的两个主辅图像小块计算相干系数
-    
-    if mean(mean(coherence)) > 0.5%筛选出相关系数大于0.5的控制点，%平均值超过阈值才有效，能用来拟合
-        indx(nn) = 1;
-    end
+function [image2_quantify,SlaveReg,valid,info] = regis_subpixel(Master,Slave,nr,nc)
+assert(isequal(size(Master),size(Slave),[nr,nc]));
+assert(all(isfinite(Master(:))) && all(isfinite(Slave(:))));
+bs=32; stride=16; lim=2; border=4;
+assert(nr>=bs && nc>=bs,'Image is smaller than one block.');
+rStarts=unique([1:stride:nr-bs+1,nr-bs+1]);
+cStarts=unique([1:stride:nc-bs+1,nc-bs+1]);
+[Xq,Yq]=meshgrid(1+border:bs-border);
+peakPower=max(abs(Master(:)).^2);
+points=zeros(numel(rStarts)*numel(cStarts),5); count=0;
+options=optimset('Display','off','TolX',1e-3,'TolFun',1e-7,'MaxIter',150,'MaxFunEvals',300);
+for ir=1:numel(rStarts)
+ for ic=1:numel(cStarts)
+  rr=rStarts(ir)+(0:bs-1); cc=cStarts(ic)+(0:bs-1);
+  patchM=Master(rr,cc); patchS=Slave(rr,cc);
+  A=abs(patchM(1+border:bs-border,1+border:bs-border));
+  if mean(A(:).^2)<1e-3*peakPower,continue;end
+  a=A(:)-mean(A(:)); na=norm(a);
+  if na<0.05*norm(A(:)) || na==0,continue;end
+  cost=@(s) patch_cost(s,patchS,Xq,Yq,a,na,lim);
+  best=Inf; start=[0,0];
+  for dr=-lim:lim
+   for dc=-lim:lim
+    f=cost([dr,dc]);
+    if f<best,best=f;start=[dr,dc];end
+   end
+  end
+  [s,f,flag]=fminsearch(cost,start,options);
+  score=-f;
+  if flag<=0 || score<0.6 || any(abs(s)>lim-0.05),continue;end
+  count=count+1;
+  points(count,:)=[mean(rr),mean(cc),s(1),s(2),score];
+ end
 end
-idx = (indx > 0);
-m = m(idx);    n = n(idx);
-sub_r = sub_r(idx);
-sub_c = sub_c(idx);
-[a,b,c,d,e,f] = all_subpixel_move(m,n,sub_r,sub_c);%利用控制点进行多项式拟合
-% 图像插值
-image_slave_regis2 = interp_cubic1(image_slave_regis,a,b,c,d,e,f);%对整幅辅图像进行插值，也就是得到配准后的辅图像
-%% 输出
-% image2_quantify = Image_Quantify(image_slave_regis2,2,2);%精配准后的量化辅图像
-image2_quantify = image_quantify(image_slave_regis2);%精配准后的量化辅图像
+points=points(1:count,:);
+assert(count>=12,'Fewer than 12 reliable blocks: increase useful scene coverage or inspect image matching.');
+mr=(points(:,1)-(nr+1)/2)/nr;
+nc0=(points(:,2)-(nc+1)/2)/nc;
+F=[ones(count,1),mr,nc0,mr.^2,nc0.^2,mr.*nc0];
+keep=true(count,1);
+for it=1:4
+ assert(sum(keep)>=12 && rank(F(keep,:))==6,'Matched block distribution cannot support a quadratic model.');
+ assert(numel(unique(points(keep,1)))>=3 && numel(unique(points(keep,2)))>=3,'Need matches in at least three rows and three columns.');
+ w=points(keep,5);
+ coef=(F(keep,:).*w)\(points(keep,3:4).*w);
+ residual=sqrt(sum((F*coef-points(:,3:4)).^2,2));
+ med=median(residual(keep));
+ robustScale=1.4826*median(abs(residual(keep)-med));
+ candidate=keep & residual<=med+max(0.1,3*robustScale);
+ if isequal(candidate,keep),break;end
+ keep=candidate;
+end
+assert(sum(keep)>=12 && rank(F(keep,:))==6,'Too few consistent matches after rejection.');
+w=points(keep,5);
+coef=(F(keep,:).*w)\(points(keep,3:4).*w);
+[C,R]=meshgrid(1:nc,1:nr);
+m=(R(:)-(nr+1)/2)/nr; n=(C(:)-(nc+1)/2)/nc;
+G=[ones(numel(m),1),m,n,m.^2,n.^2,m.*n];
+shift=G*coef;
+dRow=reshape(shift(:,1),nr,nc); dCol=reshape(shift(:,2),nr,nc);
+SlaveReg=interp2(Slave,C+dCol,R+dRow,'cubic',NaN);
+hull=convhull(points(keep,2),points(keep,1));
+accepted=points(keep,:);
+inside=inpolygon(C,R,accepted(hull,2),accepted(hull,1));
+valid=isfinite(SlaveReg) & inside & abs(dRow)<=lim & abs(dCol)<=lim;
+SlaveReg(~valid)=NaN;
+amp=abs(SlaveReg);amp(~valid)=0;
+image2_quantify=20*log10(amp/max(max(amp(:)),eps)+eps);
+info.points=points;info.keep=keep;info.dRow=dRow;info.dCol=dCol;
+info.accepted=sum(keep);info.candidates=count;info.blocks=numel(rStarts)*numel(cStarts);
+end
+function f=patch_cost(s,S,X,Y,a,na,lim)
+if any(abs(s)>lim),f=1e3+sum(s.^2);return;end
+z=interp2(S,X+s(2),Y+s(1),'cubic');
+b=abs(z(:)); b=b-mean(b); nb=norm(b);
+if nb==0 || any(~isfinite(b)),f=1e3;else,f=-real(a'*b)/(na*nb);end
 end

@@ -1,0 +1,4 @@
+﻿
+# Simulation outputs and MATLAB autosave
+/output/
+*.asv
